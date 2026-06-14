@@ -1,0 +1,26 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --time=0-01:30:00
+#SBATCH --mem=2GB
+#SBATCH --array=0-55
+#SBATCH --output=out/%N-download_wrapper-%j.out
+
+export PANORAMA=$(( (SLURM_ARRAY_TASK_ID / 18) == 0 ))
+export PERSPECTIVE_FULL=$(( (SLURM_ARRAY_TASK_ID / 18) == 1 )) 
+export PERSPECTIVE_EMPTY=$(( (SLURM_ARRAY_TASK_ID / 18) == 2 ))
+export BBOX_INSTANCE_ANNOTATIONS=$(( SLURM_ARRAY_TASK_ID == 54 ))
+export STRUCTURE_ANNOTATIONS=$(( SLURM_ARRAY_TASK_ID == 55 ))
+export MIN=$(( SLURM_ARRAY_TASK_ID % 18 )) 
+export MAX=$(( SLURM_ARRAY_TASK_ID % 18 )) 
+
+echo "PANORAMA: $PANORAMA"
+echo "PERSPECTIVE_FULL: $PERSPECTIVE_FULL"
+echo "PERSPECTIVE_EMPTY: $PERSPECTIVE_EMPTY"
+echo "BBOX_INSTANCE_ANNOTATIONS: $BBOX_INSTANCE_ANNOTATIONS"
+echo "STRUCTURE_ANNOTATIONS: $STRUCTURE_ANNOTATIONS"
+echo "MIN: $MIN"
+echo "MAX: $MAX"
+
+./download.sh

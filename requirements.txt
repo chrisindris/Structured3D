@@ -1,0 +1,6 @@
+open3d
+matplotlib
+shapely
+descartes
+numpy
+panda3d

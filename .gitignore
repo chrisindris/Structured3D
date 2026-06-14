@@ -1,3 +1,10 @@
+# Directories for AllianceCan runs
+secrets/
+apptainer/
+.github/
+data/
+out/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 vis/
