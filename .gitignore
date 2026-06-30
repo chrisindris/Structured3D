@@ -3,7 +3,9 @@ secrets/
 apptainer/
 .github/
 data/
+data_sandbox/
 out/
+SPAR-7M-RGBD/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

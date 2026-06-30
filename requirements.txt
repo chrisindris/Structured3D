@@ -4,3 +4,4 @@ shapely
 descartes
 numpy
 panda3d
+h5py
