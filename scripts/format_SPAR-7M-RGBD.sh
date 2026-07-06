@@ -3,7 +3,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
 #SBATCH --time=2-00:00:00
-#SBATCH --mem=128GB
+#SBATCH --mem=745GB
 #SBATCH --output=out/%N-format_SPAR-7M-RGBD-%j.out
 #SBATCH --mail-user=christopher.indris@torontomu.ca
 #SBATCH --mail-type=ALL
@@ -19,7 +19,7 @@ set -o pipefail
 SCENE_TO_USE=""
 PRECOUNT_PROGRESS=true
 WORKERS=32
-RESUME_TAR_GZ=""
+RESUME_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_partial.tar.gz"
 OVERWRITE_JSONL=false
 SKIP_EXISTING_ARTIFACTS=false
 while [[ $# -gt 0 ]]; do
@@ -201,6 +201,7 @@ PYTHON_ARGS=(
     python format_SPAR-7M-RGBD.py
     --combined-dataset "${COMBINED_DATASET_DIR}"
     --input-tar-gz "${COMBINED_TAR_GZ}"
+    --curr-dataset "${RESUME_TAR_COPY}"
     --extract-root "${WORKDIR}"
     --workers "${WORKERS}"
     --overwrite-jsonl

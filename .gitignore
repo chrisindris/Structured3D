@@ -6,6 +6,7 @@ data/
 data_sandbox/
 out/
 SPAR-7M-RGBD/
+tmp_structured3d_combined/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
