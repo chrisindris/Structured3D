@@ -44,6 +44,7 @@ PACKABLE_IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
 RAW_COPY_FILENAMES = ("video_idx.txt", "intrinsic_color.txt", "intrinsic_depth.txt")
 DEFAULT_WORKERS = 16
 STREAMING_STATS_KEYS = ("jsonl_appended", "packed_new", "copied_passthrough", "skipped_existing", "ignored", "unsafe_member", "failed")
+MAX_FAILURE_SAMPLES = 3
 
 IMAGE_PACKING = {
 	"image_color": {"h5_name": "image_color.h5", "index_name": "image_color.json", "index_field": "order"},
@@ -466,6 +467,10 @@ def process_streamed_file(
 	return "ignored"
 
 
+def describe_streamed_file_target(relative_path: Path, combined_dataset: Path) -> Path:
+	return combined_dataset / relative_path
+
+
 def stream_tar_and_pack(
 	input_tar_gz: Path,
 	combined_dataset: Path,
@@ -563,6 +568,7 @@ def pack_stream_queue_worker(
 	worker_extract_root = extract_root / f"worker_{worker_index:02d}"
 	index_cache = IndexCache()
 	stats = {key: 0 for key in STREAMING_STATS_KEYS}
+	failure_samples: list[str] = []
 	error_message = ""
 
 	try:
@@ -585,8 +591,13 @@ def pack_stream_queue_worker(
 					skip_existing_artifacts,
 				)
 				stats[status] = stats.get(status, 0) + 1
-			except Exception:
+			except Exception as exc:
 				stats["failed"] = stats.get("failed", 0) + 1
+				if len(failure_samples) < MAX_FAILURE_SAMPLES:
+					target_path = describe_streamed_file_target(relative_path, combined_dataset)
+					failure_samples.append(
+						f"{relative_path.as_posix()} -> {target_path.as_posix()}: {type(exc).__name__}: {exc}"
+					)
 			finally:
 				if not keep_extracted:
 					extracted_path.unlink(missing_ok=True)
@@ -602,7 +613,12 @@ def pack_stream_queue_worker(
 	except Exception as exc:
 		error_message = f"{type(exc).__name__}: {exc}"
 
-	result_queue.put({"worker_index": worker_index, "stats": stats, "error": error_message})
+	if failure_samples:
+		if error_message:
+			error_message += "; "
+		error_message += " | ".join(failure_samples)
+
+	result_queue.put({"worker_index": worker_index, "stats": stats, "error": error_message, "failures": failure_samples})
 
 
 def collect_worker_results(processes: list[multiprocessing.Process], result_queue) -> list[dict[str, object]]:
