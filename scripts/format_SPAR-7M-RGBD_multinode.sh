@@ -13,7 +13,7 @@ PRECOUNT_PROGRESS=true
 WORKERS="${SLURM_CPUS_PER_TASK:-16}"
 NODE_COUNT="${SLURM_NNODES:-1}"
 NODE_INDEX="${SLURM_PROCID:-0}"
-RESUME_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_partial.tar.gz"
+RESUME_TAR_GZ="${RESUME_TAR_GZ:-}"
 OVERWRITE_JSONL=false
 SKIP_EXISTING_ARTIFACTS=false
 while [[ $# -gt 0 ]]; do
@@ -127,7 +127,6 @@ if [[ -n "$SCENE_TO_USE" ]]; then
     echo "Note: SCENE_TO_USE is currently ignored in streaming COMBINED_TAR_GZ mode."
 fi
 
-
 if [[ -z "$SLURM_TMPDIR" ]]; then
     export COMBINED_TAR_GZ="/scratch/indrisch/spar-rgbd-full.tar.gz"
     echo "COMBINED_TAR_GZ: ${COMBINED_TAR_GZ}" 
@@ -135,6 +134,10 @@ else
     COMBINED_TAR_GZ="${SLURM_TMPDIR}/spar-rgbd-full.tar.gz"
     cp "/scratch/indrisch/spar-rgbd-full.tar.gz" "${COMBINED_TAR_GZ}"
     echo "COMBINED_TAR_GZ: ${COMBINED_TAR_GZ}" 
+fi
+
+if [[ -n "$RESUME_TAR_GZ" ]]; then
+    SKIP_EXISTING_ARTIFACTS=true
 fi
 
 if [[ "$PRECOUNT_PROGRESS" == true ]]; then
@@ -200,9 +203,6 @@ PYTHON_ARGS=(
     --workers "${WORKERS}"
     --node-count "${NODE_COUNT}"
     --node-index "${NODE_INDEX}"
-    --overwrite-jsonl
-    --skip-existing-artifacts
-    --tar-list-file "/scratch/indrisch/spar-rgbd-full-file-list.txt"
 )
 if [[ "$OVERWRITE_JSONL" == true ]]; then
     PYTHON_ARGS+=(--overwrite-jsonl)

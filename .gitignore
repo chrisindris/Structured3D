@@ -9,6 +9,9 @@ SPAR-7M-RGBD/
 tmp_structured3d_combined/
 scripts/out/
 
+# LLM miscellany
+.agents/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 vis/

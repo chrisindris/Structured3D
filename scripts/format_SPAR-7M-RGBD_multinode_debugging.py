@@ -58,7 +58,7 @@ MATRIX_PACKING = {
 		"h5_name": "intrinsic.h5",
 		"index_name": "intrinsic.json",
 		"index_field": "index",
-		"expected_shape": (3, 3),
+		"expected_shape": (3, 3), # NOTE: this is usually 3x3, though oddly in certain cases we have 16 elements (4x4).
 	},
 	"pose": {
 		"h5_name": "pose.h5",
@@ -73,6 +73,49 @@ MATRIX_PACKING = {
 		"expected_shape": (4, 4),
 	},
 }
+
+
+def packing_config_for_asset_type(asset_type: str) -> dict[str, object] | None:
+	if asset_type in IMAGE_PACKING:
+		return IMAGE_PACKING[asset_type]
+	if asset_type in MATRIX_PACKING:
+		return MATRIX_PACKING[asset_type]
+	return None
+
+
+def streamed_member_already_present(
+	relative_path: Path, combined_dataset: Path, index_cache: IndexCache, check_h5: bool = True
+) -> bool:
+	if relative_path.suffix == ".jsonl":
+		return (combined_dataset / relative_path).exists()
+
+	scene_root, asset_type, action = classify_scene_member(relative_path)
+	if scene_root is None:
+		return False
+
+	destination_path = combined_dataset / relative_path
+	if action == "copy":
+		return destination_path.exists()
+
+	if action == "pack":
+		packing_config = packing_config_for_asset_type(asset_type or "")
+		if packing_config is None:
+			return False
+		index_path = destination_path.parent / str(packing_config["index_name"])
+		if index_cache.has(index_path, relative_path.name):
+			return True
+		if not check_h5:
+			return False
+		h5_path = destination_path.parent / str(packing_config["h5_name"])
+		if not h5_path.exists():
+			return False
+		try:
+			with h5py.File(h5_path, "r") as h5_file:
+				return relative_path.name in h5_file
+		except (BlockingIOError, OSError):
+			return False
+
+	return False
 
 
 def iter_jsonl_files(root: Path) -> Iterable[Path]:
@@ -316,7 +359,13 @@ def pack_matrix_file(
 		return False
 
 	matrix = np.loadtxt(source_path, dtype=np.float32)
-	matrix = np.asarray(matrix, dtype=np.float32).reshape(tuple(packing_config["expected_shape"]))
+	try:
+		matrix = np.asarray(matrix, dtype=np.float32).reshape(tuple(packing_config["expected_shape"]))
+	except ValueError:
+		# HACK: If the reshaped shape is (4,4), we will remove the last element to cut it to the expected shape (which is typically 3x3).
+		print(f"WARNING: Reshaping matrix failed for {source_path}. Cutting to the expected shape {packing_config['expected_shape']}")
+		x,y = tuple(packing_config["expected_shape"])
+		matrix = np.asarray(matrix, dtype=np.float32).reshape((4,4))[:x,:y]
 
 	destination_folder.mkdir(parents=True, exist_ok=True)
 	h5_path = destination_folder / str(packing_config["h5_name"])
@@ -440,6 +489,9 @@ def process_streamed_file(
 	overwrite_jsonl: bool,
 	skip_existing_artifacts: bool,
 ) -> str:
+	if skip_existing_artifacts and streamed_member_already_present(relative_path, combined_dataset, index_cache):
+		return "skipped_existing"
+
 	if relative_path.suffix == ".jsonl":
 		jsonl_destination = combined_dataset / relative_path
 		if overwrite_jsonl:
@@ -505,7 +557,6 @@ def stream_tar_and_pack(
 		for member in archive:
 			if not member.isfile():
 				continue
-			progress.update(1)
 
 			relative_path = Path(member.name)
 			if not is_safe_relative_path(relative_path):
@@ -513,6 +564,11 @@ def stream_tar_and_pack(
 				continue
 			if not member_assigned_to_node(relative_path, node_count, node_index):
 				continue
+			if skip_existing_artifacts and streamed_member_already_present(relative_path, combined_dataset, index_cache):
+				stats["skipped_existing"] += 1
+				continue
+
+			progress.update(1)
 
 			member_payload = archive.extractfile(member)
 			if member_payload is None:
@@ -542,9 +598,17 @@ def stream_tar_and_pack(
 		print(f"  {key}: {stats.get(key, 0)}")
 
 
-def count_worker_assignments(tar_list_file: Path, worker_count: int, node_count: int, node_index: int) -> tuple[list[int], int]:
+def count_worker_assignments(
+	tar_list_file: Path,
+	combined_dataset: Path,
+	worker_count: int,
+	skip_existing_artifacts: bool,
+	node_count: int,
+	node_index: int,
+) -> tuple[list[int], int]:
 	worker_counts = [0 for _ in range(worker_count)]
 	unsafe_members = 0
+	index_cache = IndexCache()
 
 	with tar_list_file.open("r", encoding="utf-8") as list_handle:
 		for line in list_handle:
@@ -557,6 +621,10 @@ def count_worker_assignments(tar_list_file: Path, worker_count: int, node_count:
 				unsafe_members += 1
 				continue
 			if not member_assigned_to_node(relative_path, node_count, node_index):
+				continue
+			if skip_existing_artifacts and streamed_member_already_present(
+				relative_path, combined_dataset, index_cache, check_h5=False
+			):
 				continue
 
 			worker_index = worker_for_key(sharding_key_for_member(relative_path), worker_count)
@@ -687,8 +755,16 @@ def stream_tar_and_pack_parallel(
 		raise ValueError("worker_count must be at least 1")
 
 	extract_root.mkdir(parents=True, exist_ok=True)
-	worker_counts, unsafe_members = count_worker_assignments(tar_list_file, worker_count, node_count, node_index)
-	total_regular_files = sum(worker_counts) + unsafe_members
+	worker_counts, unsafe_members = count_worker_assignments(
+		tar_list_file,
+		combined_dataset,
+		worker_count,
+		skip_existing_artifacts,
+		node_count,
+		node_index,
+	)
+	total_regular_files = sum(worker_counts)
+	producer_index_cache = IndexCache()
 	print(f"Parallel streaming ingest with {worker_count} local workers on node {node_index} of {node_count}")
 	for worker_index, worker_count_for_manifest in enumerate(worker_counts):
 		print(f"  worker_{worker_index:02d}: {worker_count_for_manifest} regular files")
@@ -729,7 +805,6 @@ def stream_tar_and_pack_parallel(
 			for member in archive:
 				if not member.isfile():
 					continue
-				progress.update(1)
 
 				relative_path = Path(member.name)
 				if not is_safe_relative_path(relative_path):
@@ -737,6 +812,13 @@ def stream_tar_and_pack_parallel(
 					continue
 				if not member_assigned_to_node(relative_path, node_count, node_index):
 					continue
+				if skip_existing_artifacts and streamed_member_already_present(
+					relative_path, combined_dataset, producer_index_cache, check_h5=False
+				):
+					producer_stats["skipped_existing"] += 1
+					continue
+
+				progress.update(1)
 
 				member_payload = archive.extractfile(member)
 				if member_payload is None:
@@ -777,7 +859,15 @@ def stream_tar_and_pack_parallel(
 		print(f"  {key}: {stats.get(key, 0)}")
 
 
-def count_regular_files_from_list(list_file: Path, node_count: int = 1, node_index: int = 0) -> int:
+
+def count_regular_files_from_list(
+	list_file: Path,
+	combined_dataset: Path,
+	skip_existing_artifacts: bool = False,
+	node_count: int = 1,
+	node_index: int = 0,
+) -> int:
+	index_cache = IndexCache()
 	with list_file.open("r", encoding="utf-8") as handle:
 		count = 0
 		for line in handle:
@@ -788,6 +878,10 @@ def count_regular_files_from_list(list_file: Path, node_count: int = 1, node_ind
 			if not is_safe_relative_path(relative_path):
 				continue
 			if not member_assigned_to_node(relative_path, node_count, node_index):
+				continue
+			if skip_existing_artifacts and streamed_member_already_present(
+				relative_path, combined_dataset, index_cache, check_h5=False
+			):
 				continue
 			count += 1
 		return count
@@ -837,7 +931,7 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--tar-list-file",
-		default=os.environ.get("TAR_LIST_FILE"),
+		default=os.environ.get("TAR_LIST_FILE_LOCAL"),
 		help="Optional precomputed tar listing file used to estimate progress total.",
 	)
 	parser.add_argument(
@@ -880,7 +974,7 @@ def main() -> None:
 		worker_count = max(1, args.workers)
 		if worker_count > 1:
 			if not args.tar_list_file:
-				raise SystemExit("Parallel tar streaming requires --tar-list-file/TAR_LIST_FILE.")
+				raise SystemExit("Parallel tar streaming requires --tar-list-file/TAR_LIST_FILE_LOCAL.")
 			tar_list_file = Path(args.tar_list_file).expanduser().resolve()
 			if not tar_list_file.exists():
 				raise SystemExit(f"Tar list file not found: {tar_list_file}")
@@ -901,7 +995,13 @@ def main() -> None:
 				tar_list_file = Path(args.tar_list_file).expanduser().resolve()
 				if not tar_list_file.exists():
 					raise SystemExit(f"Tar list file not found: {tar_list_file}")
-				regular_file_total = count_regular_files_from_list(tar_list_file, args.node_count, args.node_index)
+				regular_file_total = count_regular_files_from_list(
+					tar_list_file,
+					combined_dataset,
+					args.skip_existing_artifacts,
+					args.node_count,
+					args.node_index,
+				)
 			else:
 				regular_file_total = None
 			stream_tar_and_pack(
