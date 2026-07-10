@@ -8,12 +8,30 @@ set -o pipefail
 
 # ---===--- 1. Set up the Python environment ---===---
 
+# Detect cluster based on terminal prompt or hostname
+if [[ "$PS1" == *"rorqual"* ]] || [[ "$HOSTNAME" == *"rorqual"* ]] || [[ "$PS1" == *"rg"* ]] || [[ "$HOSTNAME" == *"rg"* ]]; then
+    CLUSTER="RORQUAL"
+elif [[ "$PS1" == *"tri"* ]] || [[ "$HOSTNAME" == *"tri"* ]]; then
+    CLUSTER="TRILLIUM"
+elif [[ "$PS1" == *"klogin"* ]] || [[ "$HOSTNAME" == *"klogin"* ]] || [[ "$PS1" == *"kn"* ]] || [[ "$HOSTNAME" == *"kn"* ]]; then
+    CLUSTER="KILLARNEY"
+else
+    echo "Warning: Could not detect cluster from PS1 or HOSTNAME. Defaulting to RORQUAL."
+    CLUSTER="RORQUAL"
+fi
+echo "Detected cluster: $CLUSTER"
+
 SCENE_TO_USE=""
 PRECOUNT_PROGRESS=true
-WORKERS="${SLURM_CPUS_PER_TASK:-16}"
+TOTAL_SLURM_CPUS=$((SLURM_NNODES * SLURM_CPUS_PER_TASK))
+WORKERS="${TOTAL_SLURM_CPUS:-16}"
 NODE_COUNT="${SLURM_NNODES:-1}"
 NODE_INDEX="${SLURM_PROCID:-0}"
+TAR_LIST_FILE="/scratch/indrisch/spar-rgbd-full-file-list.txt"
 RESUME_TAR_GZ="${RESUME_TAR_GZ:-}"
+COMBINED_TAR_GZ="/scratch/indrisch/spar-rgbd-full.tar.gz"
+FINAL_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode"
+FINAL_DATASET_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode.tar.gz"
 OVERWRITE_JSONL=false
 SKIP_EXISTING_ARTIFACTS=false
 while [[ $# -gt 0 ]]; do
@@ -22,8 +40,25 @@ while [[ $# -gt 0 ]]; do
             PRECOUNT_PROGRESS=false
             shift
             ;;
+        --combined-tar-gz)
+            COMBINED_TAR_GZ="$2"
+            shift 2
+            ;;
         --resume-tar-gz)
             RESUME_TAR_GZ="$2"
+            shift 2
+            ;;
+        --tar-list-file)
+            PRECOUNT_PROGRESS=true
+            TAR_LIST_FILE="$2"
+            shift 2
+            ;;
+        --final-dataset-dir)
+            FINAL_DATASET_DIR="$2"
+            shift 2
+            ;;
+        --final-dataset-tar-gz)
+            FINAL_DATASET_TAR_GZ="$2"
             shift 2
             ;;
         --overwrite-jsonl)
@@ -35,7 +70,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 [--no-precount-progress] [--resume-tar-gz PATH] [--overwrite-jsonl] [--skip-existing-artifacts] [SCENE_TO_USE]"
+            echo "Usage: $0 [--no-precount-progress] [--resume-tar-gz PATH] [--combined-tar-gz PATH] [--tar-list-file PATH] [--final-dataset-dir PATH] [--final-dataset-tar-gz PATH] [--overwrite-jsonl] [--skip-existing-artifacts] [SCENE_TO_USE]"
             exit 0
             ;;
         --)
@@ -59,6 +94,7 @@ while [[ $# -gt 0 ]]; do
 done
 echo "SCENE_TO_USE: $SCENE_TO_USE"
 echo "PRECOUNT_PROGRESS: $PRECOUNT_PROGRESS"
+echo "TOTAL_SLURM_CPUS: $TOTAL_SLURM_CPUS"
 echo "WORKERS: $WORKERS"
 echo "NODE_COUNT: $NODE_COUNT"
 echo "NODE_INDEX: $NODE_INDEX"
@@ -89,15 +125,21 @@ module load StdEnv/2023  gcc/12.3  openmpi/4.1.5
 module load python/3.12 cuda/12.6 opencv/4.12.0
 module load arrow
 
-if [[ -z "$SLURM_TMPDIR" ]]; then
-    export VENV_SPAR7M="/scratch/indrisch/venv_spar7m/" 
+if [[ "$CLUSTER" == "TRILLIUM" ]]; then
+    echo "On Trillium, it is suggested to create venvs on login node in HOME and then source: https://docs.alliancecan.ca/wiki/Python#Creating_and_using_a_virtual_environment"
+    export VENV_SPAR7M="/home/indrisch/venv_spar7m/"
     source ${VENV_SPAR7M}/bin/activate
 else
-    export VENV_SPAR7M="${SLURM_TMPDIR}/venv_spar7m/" 
-    virtualenv --no-download ${VENV_SPAR7M}
-    source ${VENV_SPAR7M}/bin/activate
-    pip install --upgrade pip setuptools wheel
-    pip install numpy torch pyarrow h5py opencv-python huggingface_hub tqdm
+    if [[ -z "$SLURM_TMPDIR" ]]; then
+        export VENV_SPAR7M="/scratch/indrisch/venv_spar7m/" 
+        source ${VENV_SPAR7M}/bin/activate
+    else
+        export VENV_SPAR7M="${SLURM_TMPDIR}/venv_spar7m/" 
+        virtualenv --no-download ${VENV_SPAR7M}
+        source ${VENV_SPAR7M}/bin/activate
+        pip install --no-index --upgrade pip setuptools wheel
+        pip install --no-index numpy torch pyarrow h5py opencv-python huggingface_hub tqdm
+    fi
 fi
 echo "Venv path: ${VENV_SPAR7M}"
 
@@ -109,9 +151,6 @@ else
 fi
 mkdir -p "${WORKDIR}"
 echo "WORKDIR: ${WORKDIR}"
-
-TAR_LIST_FILE="${WORKDIR}/spar-rgbd-full-file-list.txt"
-echo "TAR_LIST_FILE: ${TAR_LIST_FILE}"
 
 # if SCENE_TO_USE is unset, set CURR_SCENE="spar-rgbd-*.tar.gz"; otherwise, set CURR_SCENE="spar-rgbd-${SCENE_TO_USE}.tar.gz"
 if [[ -z "$SCENE_TO_USE" ]]; then
@@ -128,11 +167,13 @@ if [[ -n "$SCENE_TO_USE" ]]; then
 fi
 
 if [[ -z "$SLURM_TMPDIR" ]]; then
-    export COMBINED_TAR_GZ="/scratch/indrisch/spar-rgbd-full.tar.gz"
+    export COMBINED_TAR_GZ
     echo "COMBINED_TAR_GZ: ${COMBINED_TAR_GZ}" 
 else
-    COMBINED_TAR_GZ="${SLURM_TMPDIR}/spar-rgbd-full.tar.gz"
-    cp "/scratch/indrisch/spar-rgbd-full.tar.gz" "${COMBINED_TAR_GZ}"
+    COMBINED_TAR_GZ_LOCAL="${SLURM_TMPDIR}/spar-rgbd-full.tar.gz"
+    echo "Copying COMBINED_TAR_GZ from ${COMBINED_TAR_GZ} to ${COMBINED_TAR_GZ_LOCAL}"
+    cp "${COMBINED_TAR_GZ}" "${COMBINED_TAR_GZ_LOCAL}"
+    export COMBINED_TAR_GZ="${COMBINED_TAR_GZ_LOCAL}"
     echo "COMBINED_TAR_GZ: ${COMBINED_TAR_GZ}" 
 fi
 
@@ -140,16 +181,35 @@ if [[ -n "$RESUME_TAR_GZ" ]]; then
     SKIP_EXISTING_ARTIFACTS=true
 fi
 
+
+TAR_LIST_FILE_LOCAL="${WORKDIR}/spar-rgbd-full-file-list.txt"
+echo "TAR_LIST_FILE: ${TAR_LIST_FILE}"
+echo "TAR_LIST_FILE_LOCAL: ${TAR_LIST_FILE_LOCAL}"
+
 if [[ "$PRECOUNT_PROGRESS" == true ]]; then
-    if command -v pigz >/dev/null 2>&1; then
-        tar --ignore-zeros -I "pigz -dc -p ${WORKERS}" -tf "${COMBINED_TAR_GZ}" > "${TAR_LIST_FILE}"
+
+    if [[ -f "$TAR_LIST_FILE" ]]; then
+        if [[ "$TAR_LIST_FILE" != "$TAR_LIST_FILE_LOCAL" ]]; then
+            echo "Copying TAR_LIST_FILE: ${TAR_LIST_FILE} to TAR_LIST_FILE_LOCAL: ${TAR_LIST_FILE_LOCAL}"
+            cp "$TAR_LIST_FILE" "$TAR_LIST_FILE_LOCAL"
+        else
+            echo "Using existing TAR_LIST_FILE_LOCAL: ${TAR_LIST_FILE_LOCAL}"
+        fi
     else
-        tar --ignore-zeros -ztf "${COMBINED_TAR_GZ}" > "${TAR_LIST_FILE}"
+        echo "Building TAR_LIST_FILE_LOCAL: ${TAR_LIST_FILE_LOCAL} from COMBINED_TAR_GZ: ${COMBINED_TAR_GZ}"
+        if command -v pigz >/dev/null 2>&1; then
+            tar --ignore-zeros -I "pigz -dc -p ${WORKERS}" -tf "${COMBINED_TAR_GZ}" > "${TAR_LIST_FILE_LOCAL}"
+        else
+            tar --ignore-zeros -ztf "${COMBINED_TAR_GZ}" > "${TAR_LIST_FILE_LOCAL}"
+        fi
     fi
-    REGULAR_FILE_TOTAL=$(grep -vc '/$' "${TAR_LIST_FILE}")
+
+    REGULAR_FILE_TOTAL=$(grep -vc '/$' "${TAR_LIST_FILE_LOCAL}")
     echo "REGULAR_FILE_TOTAL: ${REGULAR_FILE_TOTAL}"
 else
-    rm -f "${TAR_LIST_FILE}"
+    if [[ -z "$SLURM_TMPDIR" ]]; then
+        rm -f "${TAR_LIST_FILE_LOCAL}"
+    fi
     echo "Progress pre-scan disabled"
 fi
 
@@ -158,7 +218,7 @@ if [[ -z "$SLURM_TMPDIR" ]]; then
     export COMBINED_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode/"
     echo "COMBINED_DATASET_DIR: ${COMBINED_DATASET_DIR}" 
 else
-    export COMBINED_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode/"
+    export COMBINED_DATASET_DIR="${SLURM_TMPDIR}/SPAR-7M-RGBD_data_combined_h5_multinode/"
     echo "COMBINED_DATASET_DIR: ${COMBINED_DATASET_DIR}" 
 fi
 
@@ -211,27 +271,43 @@ if [[ "$SKIP_EXISTING_ARTIFACTS" == true ]]; then
     PYTHON_ARGS+=(--skip-existing-artifacts)
 fi
 if [[ "$PRECOUNT_PROGRESS" == true ]]; then
-    PYTHON_ARGS+=(--tar-list-file "${TAR_LIST_FILE}")
+    PYTHON_ARGS+=(--tar-list-file "${TAR_LIST_FILE_LOCAL}")
 fi
 "${PYTHON_ARGS[@]}"
 
 # put onto permanent storage
-FINAL_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode"
-FINAL_DATASET_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode.tar.gz"
 if [[ "${SPAR7M_SKIP_FINAL_PACKAGING:-0}" == "1" ]]; then
     echo "Skipping final packaging in worker step."
 elif [[ "${NODE_INDEX}" == "0" ]]; then
     if [[ -e "${FINAL_DATASET_TAR_GZ}" ]]; then
         echo "Error: Final tar archive already exists: ${FINAL_DATASET_TAR_GZ}" >&2
         echo "Remove or rename it before rerunning to avoid overwriting a completed run." >&2
-        exit 1
     fi
 
-    echo "file count in COMBINED_DATASET_DIR: $(find "${COMBINED_DATASET_DIR}" -type f | wc -l)"
-    echo "disk usage of COMBINED_DATASET_DIR: $(du -sh "${COMBINED_DATASET_DIR}")"
+    echo "file count in COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR}: $(find "${COMBINED_DATASET_DIR}" -type f | wc -l)"
+    echo "disk usage of COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR}: $(du -sh "${COMBINED_DATASET_DIR}")"
 
-    echo "Store a tar.gz on scratch at ${FINAL_DATASET_TAR_GZ} (TODO: transfer to nearline; it seems as though this cannot be done through compute nodes)"
-    tar -czf "${FINAL_DATASET_TAR_GZ}" "${COMBINED_DATASET_DIR}"
+    echo "Store a tar.gz from COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR} on scratch at ${FINAL_DATASET_TAR_GZ}"
+    mkdir -p $(dirname "${FINAL_DATASET_TAR_GZ}")
+    if ! tar -czf "${FINAL_DATASET_TAR_GZ}" "${COMBINED_DATASET_DIR}"; then
+        echo "Warning: tar failed, but continuing the script..."
+    fi
+
+    echo "disk usage of FINAL_DATASET_TAR_GZ ${FINAL_DATASET_TAR_GZ}: $(du -sh "${FINAL_DATASET_TAR_GZ}")"
+
+    echo "Rsync ${COMBINED_DATASET_DIR} to ${FINAL_DATASET_DIR}_rsync"
+    mkdir -p $(dirname "${FINAL_DATASET_DIR}_rsync")
+    rsync -auzh --no-p --no-g "${COMBINED_DATASET_DIR}" "${FINAL_DATASET_DIR}_rsync"
+
+    echo "disk usage of FINAL_DATASET_DIR_rsync ${FINAL_DATASET_DIR}_rsync: $(du -sh "${FINAL_DATASET_DIR}_rsync")"
+
+    echo "Move from COMBINED_DATASET_DIR: ${COMBINED_DATASET_DIR} to FINAL_DATASET_DIR: ${FINAL_DATASET_DIR}"
+    if ! mv "${COMBINED_DATASET_DIR}" $(dirname "${FINAL_DATASET_DIR}"); then
+        echo "Warning: mv failed, but continuing the script..."
+    fi
+
+    echo "disk usage of FINAL_DATASET_DIR ${FINAL_DATASET_DIR}: $(du -sh "${FINAL_DATASET_DIR}")"
+
 else
     echo "Skipping final packaging on node ${NODE_INDEX}; node 0 will handle it."
 fi

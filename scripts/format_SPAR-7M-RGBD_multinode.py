@@ -58,7 +58,7 @@ MATRIX_PACKING = {
 		"h5_name": "intrinsic.h5",
 		"index_name": "intrinsic.json",
 		"index_field": "index",
-		"expected_shape": (3, 3),
+		"expected_shape": (3, 3), # NOTE: this is usually 3x3, though oddly in certain cases we have 16 elements (4x4).
 	},
 	"pose": {
 		"h5_name": "pose.h5",
@@ -359,7 +359,13 @@ def pack_matrix_file(
 		return False
 
 	matrix = np.loadtxt(source_path, dtype=np.float32)
-	matrix = np.asarray(matrix, dtype=np.float32).reshape(tuple(packing_config["expected_shape"]))
+	try:
+		matrix = np.asarray(matrix, dtype=np.float32).reshape(tuple(packing_config["expected_shape"]))
+	except ValueError:
+		# HACK: If the reshaped shape is (4,4), we will remove the last element to cut it to the expected shape (which is typically 3x3).
+		print(f"WARNING: Reshaping matrix failed for {source_path}. Cutting to the expected shape {packing_config['expected_shape']}")
+		x,y = tuple(packing_config["expected_shape"])
+		matrix = np.asarray(matrix, dtype=np.float32).reshape((4,4))[:x,:y]
 
 	destination_folder.mkdir(parents=True, exist_ok=True)
 	h5_path = destination_folder / str(packing_config["h5_name"])
@@ -551,7 +557,6 @@ def stream_tar_and_pack(
 		for member in archive:
 			if not member.isfile():
 				continue
-			progress.update(1)
 
 			relative_path = Path(member.name)
 			if not is_safe_relative_path(relative_path):
@@ -559,6 +564,11 @@ def stream_tar_and_pack(
 				continue
 			if not member_assigned_to_node(relative_path, node_count, node_index):
 				continue
+			if skip_existing_artifacts and streamed_member_already_present(relative_path, combined_dataset, index_cache):
+				stats["skipped_existing"] += 1
+				continue
+
+			progress.update(1)
 
 			member_payload = archive.extractfile(member)
 			if member_payload is None:
@@ -921,7 +931,7 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--tar-list-file",
-		default=os.environ.get("TAR_LIST_FILE"),
+		default=os.environ.get("TAR_LIST_FILE_LOCAL"),
 		help="Optional precomputed tar listing file used to estimate progress total.",
 	)
 	parser.add_argument(
@@ -964,7 +974,7 @@ def main() -> None:
 		worker_count = max(1, args.workers)
 		if worker_count > 1:
 			if not args.tar_list_file:
-				raise SystemExit("Parallel tar streaming requires --tar-list-file/TAR_LIST_FILE.")
+				raise SystemExit("Parallel tar streaming requires --tar-list-file/TAR_LIST_FILE_LOCAL.")
 			tar_list_file = Path(args.tar_list_file).expanduser().resolve()
 			if not tar_list_file.exists():
 				raise SystemExit(f"Tar list file not found: {tar_list_file}")
