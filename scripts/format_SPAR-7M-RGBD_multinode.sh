@@ -30,8 +30,8 @@ NODE_INDEX="${SLURM_PROCID:-0}"
 TAR_LIST_FILE="/scratch/indrisch/spar-rgbd-full-file-list.txt"
 RESUME_TAR_GZ="${RESUME_TAR_GZ:-}"
 COMBINED_TAR_GZ="/scratch/indrisch/spar-rgbd-full.tar.gz"
-FINAL_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode"
-FINAL_DATASET_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode.tar.gz"
+FINAL_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode_v2"
+FINAL_DATASET_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode_v2.tar.gz"
 OVERWRITE_JSONL=false
 SKIP_EXISTING_ARTIFACTS=false
 while [[ $# -gt 0 ]]; do
@@ -215,10 +215,10 @@ fi
 
 
 if [[ -z "$SLURM_TMPDIR" ]]; then
-    export COMBINED_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode/"
+    export COMBINED_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode_v2/"
     echo "COMBINED_DATASET_DIR: ${COMBINED_DATASET_DIR}" 
 else
-    export COMBINED_DATASET_DIR="${SLURM_TMPDIR}/SPAR-7M-RGBD_data_combined_h5_multinode/"
+    export COMBINED_DATASET_DIR="${SLURM_TMPDIR}/SPAR-7M-RGBD_data_combined_h5_multinode_v2/"
     echo "COMBINED_DATASET_DIR: ${COMBINED_DATASET_DIR}" 
 fi
 
@@ -278,36 +278,13 @@ fi
 # put onto permanent storage
 if [[ "${SPAR7M_SKIP_FINAL_PACKAGING:-0}" == "1" ]]; then
     echo "Skipping final packaging in worker step."
-elif [[ "${NODE_INDEX}" == "0" ]]; then
-    if [[ -e "${FINAL_DATASET_TAR_GZ}" ]]; then
-        echo "Error: Final tar archive already exists: ${FINAL_DATASET_TAR_GZ}" >&2
-        echo "Remove or rename it before rerunning to avoid overwriting a completed run." >&2
-    fi
-
-    echo "file count in COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR}: $(find "${COMBINED_DATASET_DIR}" -type f | wc -l)"
-    echo "disk usage of COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR}: $(du -sh "${COMBINED_DATASET_DIR}")"
-
-    echo "Store a tar.gz from COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR} on scratch at ${FINAL_DATASET_TAR_GZ}"
-    mkdir -p $(dirname "${FINAL_DATASET_TAR_GZ}")
-    if ! tar -czf "${FINAL_DATASET_TAR_GZ}" "${COMBINED_DATASET_DIR}"; then
-        echo "Warning: tar failed, but continuing the script..."
-    fi
-
-    echo "disk usage of FINAL_DATASET_TAR_GZ ${FINAL_DATASET_TAR_GZ}: $(du -sh "${FINAL_DATASET_TAR_GZ}")"
-
-    echo "Rsync ${COMBINED_DATASET_DIR} to ${FINAL_DATASET_DIR}_rsync"
-    mkdir -p $(dirname "${FINAL_DATASET_DIR}_rsync")
-    rsync -auzh --no-p --no-g "${COMBINED_DATASET_DIR}" "${FINAL_DATASET_DIR}_rsync"
-
-    echo "disk usage of FINAL_DATASET_DIR_rsync ${FINAL_DATASET_DIR}_rsync: $(du -sh "${FINAL_DATASET_DIR}_rsync")"
-
-    echo "Move from COMBINED_DATASET_DIR: ${COMBINED_DATASET_DIR} to FINAL_DATASET_DIR: ${FINAL_DATASET_DIR}"
-    if ! mv "${COMBINED_DATASET_DIR}" $(dirname "${FINAL_DATASET_DIR}"); then
-        echo "Warning: mv failed, but continuing the script..."
-    fi
-
-    echo "disk usage of FINAL_DATASET_DIR ${FINAL_DATASET_DIR}: $(du -sh "${FINAL_DATASET_DIR}")"
-
 else
-    echo "Skipping final packaging on node ${NODE_INDEX}; node 0 will handle it."
+    echo "Node ${NODE_INDEX}: file count in COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR}: $(find "${COMBINED_DATASET_DIR}" -type f | wc -l)"
+    echo "Node ${NODE_INDEX}: disk usage of COMBINED_DATASET_DIR ${COMBINED_DATASET_DIR}: $(du -sh "${COMBINED_DATASET_DIR}")"
+
+    echo "Node ${NODE_INDEX}: rsyncing ${COMBINED_DATASET_DIR} to permanent storage ${FINAL_DATASET_DIR}"
+    mkdir -p "${FINAL_DATASET_DIR}"
+    rsync -auzh --no-p --no-g "${COMBINED_DATASET_DIR%/}/" "${FINAL_DATASET_DIR}/"
+
+    echo "Node ${NODE_INDEX}: rsync complete."
 fi

@@ -25,8 +25,8 @@ srun \
 	--tar-list-file "${TAR_LIST_FILE}" \
 	--resume-tar-gz "${RESUME_TAR_GZ}"
 
-FINAL_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode"
-FINAL_DATASET_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode.tar.gz"
+FINAL_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode_v2"
+FINAL_DATASET_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode_v2.tar.gz"
 if [[ -e "${FINAL_DATASET_TAR_GZ}" ]]; then
 	echo "Error: Final tar archive already exists: ${FINAL_DATASET_TAR_GZ}" >&2
 	echo "Remove or rename it before rerunning to avoid overwriting a completed run." >&2
