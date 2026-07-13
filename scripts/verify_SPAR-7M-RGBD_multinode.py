@@ -691,7 +691,7 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--report-file",
-		default="out/verification_school_report_card.txt",
+		default="verification/verification_school_report_card.txt",
 		help="Path to output School Report Card file.",
 	)
 	return parser.parse_args()

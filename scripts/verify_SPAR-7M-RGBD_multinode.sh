@@ -68,17 +68,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$PROJECT_DIR"
-mkdir -p out
+mkdir -p verification
 
 if [[ "$RUN_PYTEST" == "true" ]]; then
     echo "Running pytest verification suite..."
-    LOG_INDEX=$(find /scratch/indrisch/Structured3D/out -type f -name "*.log" | wc -l)
-    OUTPUT_LOG="/scratch/indrisch/Structured3D/out/pytest_output_${LOG_INDEX}.log"
+    LOG_INDEX=$(find /scratch/indrisch/Structured3D/verification -type f -name "*.log" | wc -l)
+    OUTPUT_LOG="/scratch/indrisch/Structured3D/verification/pytest_output_${LOG_INDEX}.log"
     echo "Output Log: ${OUTPUT_LOG}"
     python3 -m pytest scripts/test_verify_SPAR_7M_RGBD.py -v "${CLI_ARGS[@]}" 2>&1 | tee "${OUTPUT_LOG}"
 else
-    TXT_INDEX=$(find /scratch/indrisch/Structured3D/out -type f -name "*.txt" | wc -l)
-    OUTPUT_TXT="/scratch/indrisch/Structured3D/out/verification_report_${TXT_INDEX}.txt"
+    TXT_INDEX=$(find /scratch/indrisch/Structured3D/verification -type f -name "*.txt" | wc -l)
+    OUTPUT_TXT="/scratch/indrisch/Structured3D/verification/verification_report_${TXT_INDEX}.txt"
     echo "Output Text: ${OUTPUT_TXT}"
     echo "Running SPAR-7M-RGBD Multi-Node verification report card engine..."
     CLI_ARGS+=("--report-file" "${OUTPUT_TXT}")
