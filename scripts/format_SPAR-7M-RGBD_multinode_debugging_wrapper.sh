@@ -13,14 +13,15 @@ set -o pipefail
 
 TAR_LIST_FILE="/scratch/indrisch/spar-rgbd-full-file-list.txt"
 
-srun --ntasks="${SLURM_NNODES:-1}"\
- 	--ntasks-per-node=1 \
-	--cpus-per-task="${SLURM_CPUS_PER_TASK:-16}" \ 
-	env SPAR7M_SKIP_FINAL_PACKAGING=1 \ 
-	/scratch/indrisch/Structured3D/scripts/format_SPAR-7M-RGBD_multinode.sh \
+srun \
+	--ntasks="${SLURM_NNODES:-1}" \
+	--ntasks-per-node=1 \
+	--cpus-per-task="${SLURM_CPUS_PER_TASK:-16}" \
+	env SPAR7M_SKIP_FINAL_PACKAGING=1 \
+	/scratch/indrisch/Structured3D/scripts/format_SPAR-7M-RGBD_multinode_debugging.sh \
 	--overwrite-jsonl \
 	--skip-existing-artifacts \
-	--tar-list-file "${TAR_LIST_FILE}" \
+	--tar-list-file "${TAR_LIST_FILE}"
 
 FINAL_DATASET_DIR="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode"
 FINAL_DATASET_TAR_GZ="/scratch/indrisch/SPAR-7M-RGBD_data_combined_h5_multinode.tar.gz"
